@@ -2,176 +2,120 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>學習點滴紀錄平台</title>
+    <title>GitHub 雲端筆記本</title>
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 20px auto; padding: 20px; background: #f4f4f9; }
-        .card { background: white; padding: 15px; margin-bottom: 15px; border-radius: 8px; shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .media-preview { max-width: 100%; height: auto; margin-top: 10px; border-radius: 4px; }
-        .controls { margin-bottom: 20px; padding: 15px; border: 1px solid #ccc; background: #eee; }
-        textarea { width: 100%; height: 100px; margin: 10px 0; }
-        input[type="text"], input[type="password"] { width: 100%; padding: 8px; margin-bottom: 10px; }
-        .hidden { display: none; }
-        button { padding: 8px 15px; cursor: pointer; }
+        body { font-family: sans-serif; max-width: 600px; margin: 20px auto; background: #f9f9f9; padding: 20px; }
+        .editor { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 80px; margin: 10px 0; }
+        .note-card { background: white; margin-top: 15px; padding: 15px; border-radius: 8px; border-left: 5px solid #007bff; }
+        .tag { color: #007bff; font-weight: bold; margin-right: 10px; }
+        button { cursor: pointer; padding: 5px 15px; }
     </style>
 </head>
 <body>
-
-    <h1>📝 學習點滴紀錄</h1>
-
-    <!-- 登入區域 (僅存放 Token，不儲存於伺服器) -->
-    <div id="auth-section" class="controls">
-        <input type="password" id="gh-token" placeholder="請輸入 GitHub Personal Access Token (Classic)">
-        <input type="text" id="gh-repo" placeholder="帳號/倉庫名 (例如: user/my-blog)">
-        <button onclick="saveConfig()">儲存配置</button>
+    <h2>🚀 GitHub 雲端紀錄平台</h2>
+    <div class="editor">
+        <select id="tagInput">
+            <option value="學習">學習</option>
+            <option value="生活">生活</option>
+            <option value="技術">技術</option>
+        </select>
+        <textarea id="noteInput" placeholder="寫點什麼..."></textarea>
+        <button onclick="saveToGitHub()">儲存到雲端</button>
     </div>
+    <div id="list">載入中...</div>
 
-    <!-- 編輯區域 -->
-    <div id="editor-section" class="controls">
-        <h3>新增/編輯文章</h3>
-        <input type="text" id="post-title" placeholder="文章標題">
-        <textarea id="post-content" placeholder="內容摘要..."></textarea>
-        <input type="file" id="post-file" accept="image/*,video/*">
-        <input type="hidden" id="edit-id">
-        <button onclick="uploadAndSave()">發佈/更新文章</button>
-        <button onclick="clearEditor()">取消重填</button>
-    </div>
+<script>
+    const CONFIG = {
+        token: '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', // 貼上你的 Token
+        user: 'cfj823tw',      // 你的 GitHub 帳號
+        repo: 'my-notes',          // 儲存庫名稱
+        file: 'data.json'           // 剛才建立的檔名
+    };
 
-    <!-- 文章列表 -->
-    <div id="posts-container">載入中...</div>
+    let fileSha = ""; // GitHub 修改檔案需要這個雜湊值
 
-    <script>
-        let config = { token: '', repo: '', path: 'data.json' };
-        let articles = [];
+    // 1. 從 GitHub 讀取 JSON
+    async function loadData() {
+        const url = `https://api.github.com{CONFIG.user}/${CONFIG.repo}/contents/${CONFIG.file}`;
+        const res = await fetch(url, {
+            headers: { "Authorization": `token ${CONFIG.token}` }
+        });
+        const data = await res.json();
+        fileSha = data.sha; // 紀錄檔案指紋
+        const content = JSON.parse(atob(data.content)); // 解碼 Base64 內容
+        render(content);
+    }
 
-        // 初始化
-        window.onload = () => {
-            const saved = localStorage.getItem('gh_config');
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                document.getElementById('gh-token').value = parsed.token;
-                document.getElementById('gh-repo').value = parsed.repo;
-                config = parsed;
-                loadData();
-            }
-        };
-
-        function saveConfig() {
-            config.token = document.getElementById('gh-token').value;
-            config.repo = document.getElementById('gh-repo').value;
-            localStorage.setItem('gh_config', JSON.stringify(config));
-            loadData();
-        }
-
-        // 從 GitHub 抓取資料
-        async function loadData() {
-            if (!config.token || !config.repo) return;
-            try {
-                const res = await fetch(`https://api.github.com{config.repo}/contents/${config.path}`, {
-                    headers: { 'Authorization': `token ${config.token}` }
-                });
-                const data = await res.json();
-                const content = decodeURIComponent(escape(atob(data.content))); // 處理中文亂碼
-                articles = JSON.parse(content);
-                config.sha = data.sha; // 紀錄檔案指紋以便稍後更新
-                renderPosts();
-            } catch (e) {
-                document.getElementById('posts-container').innerHTML = "尚無資料或配置錯誤。";
-                articles = [];
-            }
-        }
-
-        function renderPosts() {
-            const container = document.getElementById('posts-container');
-            container.innerHTML = articles.map(item => `
-                <div class="card">
-                    <h3>${item.title}</h3>
-                    <p>${item.content.substring(0, 50)}...</p>
-                    ${item.media ? (item.media.endsWith('.mp4') ? `<video src="${item.media}" class="media-preview" controls></video>` : `<img src="${item.media}" class="media-preview">`) : ''}
-                    <div style="margin-top:10px;">
-                        <button onclick="editPost(${item.id})">編輯</button>
-                        <button onclick="deletePost(${item.id})" style="color:red">刪除</button>
-                    </div>
+    // 2. 呈現列表
+    function render(notes) {
+        const container = document.getElementById('list');
+        container.innerHTML = notes.map((n, i) => `
+            <div class="note-card">
+                <span class="tag">#${n.tag}</span> <strong>${n.content.substring(0, 15)}...</strong>
+                <p>${n.content}</p>
+                <small>${n.date}</small>
+                <div style="text-align:right">
+                    <button onclick="deleteNote(${i})">刪除</button>
                 </div>
-            `).join('');
-        }
+            </div>
+        `).join('');
+    }
 
-        // 上傳檔案並儲存 JSON
-        async function uploadAndSave() {
-            const fileInput = document.getElementById('post-file');
-            const title = document.getElementById('post-title').value;
-            const content = document.getElementById('post-content').value;
-            const editId = document.getElementById('edit-id').value;
-            
-            let mediaUrl = "";
+    // 3. 儲存/更新到 GitHub
+    async function saveToGitHub() {
+        const content = document.getElementById('noteInput').value;
+        const tag = document.getElementById('tagInput').value;
+        if(!content) return;
 
-            // 如果有檔案，先上傳到 uploads/
-            if (fileInput.files.length > 0) {
-                const file = fileInput.files[0];
-                const reader = new FileReader();
-                mediaUrl = await new Promise(resolve => {
-                    reader.onload = async () => {
-                        const base64 = reader.result.split(',')[1];
-                        const fileName = `uploads/${Date.now()}_${file.name}`;
-                        await fetch(`https://api.github.com{config.repo}/contents/${fileName}`, {
-                            method: 'PUT',
-                            headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ message: "Upload media", content: base64 })
-                        });
-                        resolve(fileName);
-                    };
-                    reader.readAsDataURL(file);
-                });
-            }
+        // 先取得最新資料
+        const url = `https://api.github.com{CONFIG.user}/${CONFIG.repo}/contents/${CONFIG.file}`;
+        const res = await fetch(url, { headers: { "Authorization": `token ${CONFIG.token}` } });
+        const fileData = await res.json();
+        const currentNotes = JSON.parse(atob(fileData.content));
 
-            // 更新文章陣列
-            if (editId) {
-                const index = articles.findIndex(a => a.id == editId);
-                articles[index] = { ...articles[index], title, content, media: mediaUrl || articles[index].media };
-            } else {
-                articles.unshift({ id: Date.now(), title, content, media: mediaUrl, date: new Date().toISOString() });
-            }
+        // 加入新筆記
+        currentNotes.unshift({ tag, content, date: new Date().toLocaleString() });
 
-            await syncToGitHub();
-            clearEditor();
-        }
+        // 上傳回 GitHub
+        await fetch(url, {
+            method: "PUT",
+            headers: { "Authorization": `token ${CONFIG.token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: "Update notes",
+                content: btoa(unescape(encodeURIComponent(JSON.stringify(currentNotes)))), // 轉碼
+                sha: fileData.sha
+            })
+        });
 
-        async function syncToGitHub() {
-            const newContent = btoa(unescape(encodeURIComponent(JSON.stringify(articles, null, 2))));
-            const res = await fetch(`https://api.github.com{config.repo}/contents/${config.path}`, {
-                method: 'PUT',
-                headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: "Update data.json",
-                    content: newContent,
-                    sha: config.sha
-                })
-            });
-            if (res.ok) {
-                alert("同步成功！");
-                loadData();
-            }
-        }
+        document.getElementById('noteInput').value = '';
+        loadData();
+    }
 
-        function editPost(id) {
-            const item = articles.find(a => a.id == id);
-            document.getElementById('post-title').value = item.title;
-            document.getElementById('post-content').value = item.content;
-            document.getElementById('edit-id').value = item.id;
-            window.scrollTo(0, 0);
-        }
+    // 4. 刪除功能
+    async function deleteNote(index) {
+        if(!confirm("確定刪除？")) return;
+        const url = `https://api.github.com{CONFIG.user}/${CONFIG.repo}/contents/${CONFIG.file}`;
+        const res = await fetch(url, { headers: { "Authorization": `token ${CONFIG.token}` } });
+        const fileData = await res.json();
+        const currentNotes = JSON.parse(atob(fileData.content));
+        
+        currentNotes.splice(index, 1);
 
-        async function deletePost(id) {
-            if (!confirm("確定刪除？")) return;
-            articles = articles.filter(a => a.id != id);
-            await syncToGitHub();
-        }
+        await fetch(url, {
+            method: "PUT",
+            headers: { "Authorization": `token ${CONFIG.token}` },
+            body: JSON.stringify({
+                message: "Delete note",
+                content: btoa(unescape(encodeURIComponent(JSON.stringify(currentNotes)))),
+                sha: fileData.sha
+            })
+        });
+        loadData();
+    }
 
-        function clearEditor() {
-            document.getElementById('post-title').value = "";
-            document.getElementById('post-content').value = "";
-            document.getElementById('edit-id').value = "";
-            document.getElementById('post-file').value = "";
-        }
-    </script>
+    loadData();
+</script>
 </body>
 </html>
+
