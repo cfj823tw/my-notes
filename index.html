@@ -1,167 +1,177 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的學習點滴</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>學習點滴紀錄平台</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 20px auto; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 15px; margin-bottom: 15px; border-radius: 8px; shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .media-preview { max-width: 100%; height: auto; margin-top: 10px; border-radius: 4px; }
+        .controls { margin-bottom: 20px; padding: 15px; border: 1px solid #ccc; background: #eee; }
+        textarea { width: 100%; height: 100px; margin: 10px 0; }
+        input[type="text"], input[type="password"] { width: 100%; padding: 8px; margin-bottom: 10px; }
+        .hidden { display: none; }
+        button { padding: 8px 15px; cursor: pointer; }
+    </style>
 </head>
-<body class="bg-gray-50 min-h-screen pb-10">
+<body>
 
-    <div class="max-w-4xl mx-auto p-6">
-        <header class="flex justify-between items-center mb-8 border-b pb-4">
-            <h1 class="text-3xl font-bold text-indigo-600">學習點滴紀錄</h1>
-            <button onclick="openModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition">新增文章</button>
-        </header>
+    <h1>📝 學習點滴紀錄</h1>
 
-        <!-- 設定區域 (輸入 Token) -->
-        <div id="setup-area" class="mb-6 p-4 bg-yellow-100 rounded-lg shadow-sm">
-            <p class="text-sm text-yellow-700 mb-2 font-bold">請輸入 GitHub Token 以啟用編輯功能：</p>
-            <input type="password" id="gh-token" class="w-full p-2 border rounded" placeholder="ghp_xxxxxxxxxxxx">
-        </div>
-
-        <!-- 文章列表區 -->
-        <div id="post-list" class="grid gap-6">
-            <p class="text-gray-500 italic text-center">載入中...</p>
-        </div>
+    <!-- 登入區域 (僅存放 Token，不儲存於伺服器) -->
+    <div id="auth-section" class="controls">
+        <input type="password" id="gh-token" placeholder="請輸入 GitHub Personal Access Token (Classic)">
+        <input type="text" id="gh-repo" placeholder="帳號/倉庫名 (例如: user/my-blog)">
+        <button onclick="saveConfig()">儲存配置</button>
     </div>
 
-    <!-- 編輯/新增 彈窗 -->
-    <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl">
-            <h2 id="modal-title" class="text-xl font-bold mb-4">新增文章</h2>
-            <input type="text" id="post-title" class="w-full p-2 mb-3 border rounded" placeholder="標題">
-            <textarea id="post-content" rows="6" class="w-full p-2 mb-3 border rounded" placeholder="內容..."></textarea>
-            <input type="text" id="post-media" class="w-full p-2 mb-4 border rounded" placeholder="圖片/影片網址 (可選)">
-            <div class="flex justify-end gap-2">
-                <button onclick="closeModal()" class="px-4 py-2 text-gray-600">取消</button>
-                <button onclick="savePost()" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">儲存</button>
-            </div>
-        </div>
+    <!-- 編輯區域 -->
+    <div id="editor-section" class="controls">
+        <h3>新增/編輯文章</h3>
+        <input type="text" id="post-title" placeholder="文章標題">
+        <textarea id="post-content" placeholder="內容摘要..."></textarea>
+        <input type="file" id="post-file" accept="image/*,video/*">
+        <input type="hidden" id="edit-id">
+        <button onclick="uploadAndSave()">發佈/更新文章</button>
+        <button onclick="clearEditor()">取消重填</button>
     </div>
+
+    <!-- 文章列表 -->
+    <div id="posts-container">載入中...</div>
 
     <script>
-        const config = {
-            owner: '你的GitHub帳號',
-            repo: 'my-cloud-data',
-            path: 'data.json'
+        let config = { token: '', repo: '', path: 'data.json' };
+        let articles = [];
+
+        // 初始化
+        window.onload = () => {
+            const saved = localStorage.getItem('gh_config');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                document.getElementById('gh-token').value = parsed.token;
+                document.getElementById('gh-repo').value = parsed.repo;
+                config = parsed;
+                loadData();
+            }
         };
 
-        let posts = [];
-        let editingId = null;
+        function saveConfig() {
+            config.token = document.getElementById('gh-token').value;
+            config.repo = document.getElementById('gh-repo').value;
+            localStorage.setItem('gh_config', JSON.stringify(config));
+            loadData();
+        }
 
-        // 初始化：讀取資料
-        async function fetchPosts() {
-            const url = `https://api.github.com{config.owner}/${config.repo}/contents/${config.path}`;
+        // 從 GitHub 抓取資料
+        async function loadData() {
+            if (!config.token || !config.repo) return;
             try {
-                const res = await fetch(url);
+                const res = await fetch(`https://api.github.com{config.repo}/contents/${config.path}`, {
+                    headers: { 'Authorization': `token ${config.token}` }
+                });
                 const data = await res.json();
-                const content = decodeURIComponent(escape(atob(data.content))); // Base64 解碼
-                posts = JSON.parse(content);
+                const content = decodeURIComponent(escape(atob(data.content))); // 處理中文亂碼
+                articles = JSON.parse(content);
+                config.sha = data.sha; // 紀錄檔案指紋以便稍後更新
                 renderPosts();
             } catch (e) {
-                document.getElementById('post-list').innerHTML = `<p class="text-red-500">無法讀取資料，請檢查倉庫名稱與檔案路徑。</p>`;
+                document.getElementById('posts-container').innerHTML = "尚無資料或配置錯誤。";
+                articles = [];
             }
         }
 
-        // 渲染列表 (僅呈現前 50 字摘要)
         function renderPosts() {
-            const list = document.getElementById('post-list');
-            list.innerHTML = posts.map(post => `
-                <div class="bg-white p-5 rounded-lg shadow-sm border hover:shadow-md transition">
-                    <div class="flex justify-between items-start mb-2">
-                        <h3 class="text-xl font-bold text-gray-800">${post.title}</h3>
-                        <span class="text-xs text-gray-400">${post.date}</span>
-                    </div>
-                    <p class="text-gray-600 mb-4">${post.content.substring(0, 50)}${post.content.length > 50 ? '...' : ''}</p>
-                    ${post.media ? `<div class="mb-4 overflow-hidden rounded bg-gray-100 flex justify-center">
-                        ${post.media.match(/\.(mp4|webm)$/i) ? `<video controls class="max-h-48"><source src="${post.media}"></video>` : `<img src="${post.media}" class="max-h-48 object-cover">`}
-                    </div>` : ''}
-                    <div class="flex gap-4">
-                        <button onclick="editPost(${post.id})" class="text-blue-600 text-sm hover:underline">編輯</button>
-                        <button onclick="deletePost(${post.id})" class="text-red-600 text-sm hover:underline">刪除</button>
+            const container = document.getElementById('posts-container');
+            container.innerHTML = articles.map(item => `
+                <div class="card">
+                    <h3>${item.title}</h3>
+                    <p>${item.content.substring(0, 50)}...</p>
+                    ${item.media ? (item.media.endsWith('.mp4') ? `<video src="${item.media}" class="media-preview" controls></video>` : `<img src="${item.media}" class="media-preview">`) : ''}
+                    <div style="margin-top:10px;">
+                        <button onclick="editPost(${item.id})">編輯</button>
+                        <button onclick="deletePost(${item.id})" style="color:red">刪除</button>
                     </div>
                 </div>
             `).join('');
         }
 
-        // 儲存至 GitHub
-        async function savePost() {
-            const token = document.getElementById('gh-token').value;
-            if(!token) return alert('請輸入 Token');
-
+        // 上傳檔案並儲存 JSON
+        async function uploadAndSave() {
+            const fileInput = document.getElementById('post-file');
             const title = document.getElementById('post-title').value;
             const content = document.getElementById('post-content').value;
-            const media = document.getElementById('post-media').value;
-            const date = new Date().toISOString().split('T')[0];
+            const editId = document.getElementById('edit-id').value;
+            
+            let mediaUrl = "";
 
-            if (editingId) {
-                const index = posts.findIndex(p => p.id === editingId);
-                posts[index] = { ...posts[index], title, content, media, date };
-            } else {
-                posts.unshift({ id: Date.now(), title, content, media, date });
+            // 如果有檔案，先上傳到 uploads/
+            if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                const reader = new FileReader();
+                mediaUrl = await new Promise(resolve => {
+                    reader.onload = async () => {
+                        const base64 = reader.result.split(',')[1];
+                        const fileName = `uploads/${Date.now()}_${file.name}`;
+                        await fetch(`https://api.github.com{config.repo}/contents/${fileName}`, {
+                            method: 'PUT',
+                            headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ message: "Upload media", content: base64 })
+                        });
+                        resolve(fileName);
+                    };
+                    reader.readAsDataURL(file);
+                });
             }
 
-            await pushToGitHub(token);
-            closeModal();
-            renderPosts();
+            // 更新文章陣列
+            if (editId) {
+                const index = articles.findIndex(a => a.id == editId);
+                articles[index] = { ...articles[index], title, content, media: mediaUrl || articles[index].media };
+            } else {
+                articles.unshift({ id: Date.now(), title, content, media: mediaUrl, date: new Date().toISOString() });
+            }
+
+            await syncToGitHub();
+            clearEditor();
         }
 
-        async function deletePost(id) {
-            if (!confirm('確定刪除？')) return;
-            const token = document.getElementById('gh-token').value;
-            posts = posts.filter(p => p.id !== id);
-            await pushToGitHub(token);
-            renderPosts();
-        }
-
-        async function pushToGitHub(token) {
-            const url = `https://api.github.com{config.owner}/${config.repo}/contents/${config.path}`;
-            const res = await fetch(url);
-            const fileData = await res.json();
-            
-            const updatedJson = JSON.stringify(posts, null, 2);
-            const body = {
-                message: "Update from My Notes Platform",
-                content: btoa(unescape(encodeURIComponent(updatedJson))),
-                sha: fileData.sha
-            };
-
-            const saveRes = await fetch(url, {
+        async function syncToGitHub() {
+            const newContent = btoa(unescape(encodeURIComponent(JSON.stringify(articles, null, 2))));
+            const res = await fetch(`https://api.github.com{config.repo}/contents/${config.path}`, {
                 method: 'PUT',
-                headers: { 'Authorization': `token ${token}` },
-                body: JSON.stringify(body)
+                headers: { 'Authorization': `token ${config.token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: "Update data.json",
+                    content: newContent,
+                    sha: config.sha
+                })
             });
-
-            if (saveRes.ok) alert('同步成功！');
-            else alert('同步失敗，請檢查 Token 權限。');
-        }
-
-        // Modal 控制
-        function openModal() {
-            editingId = null;
-            document.getElementById('modal-title').innerText = '新增文章';
-            document.getElementById('post-title').value = '';
-            document.getElementById('post-content').value = '';
-            document.getElementById('post-media').value = '';
-            document.getElementById('modal').classList.remove('hidden');
+            if (res.ok) {
+                alert("同步成功！");
+                loadData();
+            }
         }
 
         function editPost(id) {
-            const post = posts.find(p => p.id === id);
-            editingId = id;
-            document.getElementById('modal-title').innerText = '編輯文章';
-            document.getElementById('post-title').value = post.title;
-            document.getElementById('post-content').value = post.content;
-            document.getElementById('post-media').value = post.media || '';
-            document.getElementById('modal').classList.remove('hidden');
+            const item = articles.find(a => a.id == id);
+            document.getElementById('post-title').value = item.title;
+            document.getElementById('post-content').value = item.content;
+            document.getElementById('edit-id').value = item.id;
+            window.scrollTo(0, 0);
         }
 
-        function closeModal() {
-            document.getElementById('modal').classList.add('hidden');
+        async function deletePost(id) {
+            if (!confirm("確定刪除？")) return;
+            articles = articles.filter(a => a.id != id);
+            await syncToGitHub();
         }
 
-        fetchPosts();
+        function clearEditor() {
+            document.getElementById('post-title').value = "";
+            document.getElementById('post-content').value = "";
+            document.getElementById('edit-id').value = "";
+            document.getElementById('post-file').value = "";
+        }
     </script>
 </body>
 </html>
