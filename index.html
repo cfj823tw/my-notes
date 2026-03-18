@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>GitHub 雲端筆記本</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 20px auto; background: #f9f9f9; padding: 20px; }
+        .editor { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 80px; margin: 10px 0; }
+        .note-card { background: white; margin-top: 15px; padding: 15px; border-radius: 8px; border-left: 5px solid #007bff; }
+        .tag { color: #007bff; font-weight: bold; margin-right: 10px; }
+        button { cursor: pointer; padding: 5px 15px; }
+    </style>
+</head>
+<body>
+    <h2>🚀 GitHub 雲端紀錄平台</h2>
+    <div class="editor">
+        <select id="tagInput">
+            <option value="學習">學習</option>
+            <option value="生活">生活</option>
+            <option value="技術">技術</option>
+        </select>
+        <textarea id="noteInput" placeholder="寫點什麼..."></textarea>
+        <button onclick="saveToGitHub()">儲存到雲端</button>
+    </div>
+    <div id="list">載入中...</div>
+
+<script>
+    const CONFIG = {
+        token: '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', // 貼上你的 Token
+        user: 'cfj823tw',      // 你的 GitHub 帳號
+        repo: 'my-notes',          // 儲存庫名稱
+        file: 'data.json'           // 剛才建立的檔名
+    };
+
+    let fileSha = ""; // GitHub 修改檔案需要這個雜湊值
+
+    // 1. 從 GitHub 讀取 JSON
+    async function loadData() {
+        const url = `https://api.github.com{CONFIG.user}/${CONFIG.repo}/contents/${CONFIG.file}`;
+        const res = await fetch(url, {
+            headers: { "Authorization": `token ${CONFIG.token}` }
+        });
+        const data = await res.json();
+        fileSha = data.sha; // 紀錄檔案指紋
+        const content = JSON.parse(atob(data.content)); // 解碼 Base64 內容
+        render(content);
+    }
+
+    // 2. 呈現列表
+    function render(notes) {
+        const container = document.getElementById('list');
+        container.innerHTML = notes.map((n, i) => `
+            <div class="note-card">
+                <span class="tag">#${n.tag}</span> <strong>${n.content.substring(0, 15)}...</strong>
+                <p>${n.content}</p>
+                <small>${n.date}</small>
+                <div style="text-align:right">
+                    <button onclick="deleteNote(${i})">刪除</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // 3. 儲存/更新到 GitHub
+    async function saveToGitHub() {
+        const content = document.getElementById('noteInput').value;
+        const tag = document.getElementById('tagInput').value;
+        if(!content) return;
+
+        // 先取得最新資料
+        const url = `https://api.github.com{CONFIG.user}/${CONFIG.repo}/contents/${CONFIG.file}`;
+        const res = await fetch(url, { headers: { "Authorization": `token ${CONFIG.token}` } });
+        const fileData = await res.json();
+        const currentNotes = JSON.parse(atob(fileData.content));
+
+        // 加入新筆記
+        currentNotes.unshift({ tag, content, date: new Date().toLocaleString() });
+
+        // 上傳回 GitHub
+        await fetch(url, {
+            method: "PUT",
+            headers: { "Authorization": `token ${CONFIG.token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: "Update notes",
+                content: btoa(unescape(encodeURIComponent(JSON.stringify(currentNotes)))), // 轉碼
+                sha: fileData.sha
+            })
+        });
+
+        document.getElementById('noteInput').value = '';
+        loadData();
+    }
+
+    // 4. 刪除功能
+    async function deleteNote(index) {
+        if(!confirm("確定刪除？")) return;
+        const url = `https://api.github.com{CONFIG.user}/${CONFIG.repo}/contents/${CONFIG.file}`;
+        const res = await fetch(url, { headers: { "Authorization": `token ${CONFIG.token}` } });
+        const fileData = await res.json();
+        const currentNotes = JSON.parse(atob(fileData.content));
+        
+        currentNotes.splice(index, 1);
+
+        await fetch(url, {
+            method: "PUT",
+            headers: { "Authorization": `token ${CONFIG.token}` },
+            body: JSON.stringify({
+                message: "Delete note",
+                content: btoa(unescape(encodeURIComponent(JSON.stringify(currentNotes)))),
+                sha: fileData.sha
+            })
+        });
+        loadData();
+    }
+
+    loadData();
+</script>
+</body>
+</html>
